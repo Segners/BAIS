@@ -7,12 +7,6 @@ using FishNet.Transporting;
 using FishNet.Object;
 using UnityEngine;
 
-/// <summary>
-/// Minimal bootstrap to start a FishNet Server or Client automatically.
-/// Attach this to an active GameObject in your Server scene (Mode = Server)
-/// and to an active GameObject in your Client scene (Mode = Client).
-/// Requires a NetworkManager present in the scene (or auto-found via InstanceFinder).
-/// </summary>
 [DisallowMultipleComponent]
 [DefaultExecutionOrder(-10000)]
 public class SimpleFishNetBootstrap : MonoBehaviour
@@ -44,7 +38,6 @@ public class SimpleFishNetBootstrap : MonoBehaviour
             return;
         }
 
-        // Subscribe to server events to log client connections/disconnections.
         SubscribeServerEvents(true);
 
         ApplyCommandLineOverrides();
@@ -53,9 +46,6 @@ public class SimpleFishNetBootstrap : MonoBehaviour
             StartNow();
     }
 
-    /// <summary>
-    /// Starts according to selected mode.
-    /// </summary>
     [ContextMenu("Start Now")] 
     public void StartNow()
     {
@@ -102,8 +92,6 @@ public class SimpleFishNetBootstrap : MonoBehaviour
 
         if (started)
         {
-            // After server start, spawn any scene NetworkObjects which are not yet spawned
-            // so connected clients can see them (eg. Triangle with NetworkObject).
             TrySpawnSceneNetworkObjects();
         }
     }
@@ -125,7 +113,6 @@ public class SimpleFishNetBootstrap : MonoBehaviour
         try
         {
             bool started;
-            // Prefer address+port overload if available in this FishNet version.
             var miAddrPort = typeof(ClientManager).GetMethod("StartConnection", new Type[] { typeof(string), typeof(ushort) });
             if (miAddrPort != null)
             {
@@ -134,7 +121,6 @@ public class SimpleFishNetBootstrap : MonoBehaviour
             }
             else
             {
-                // Fallback to address-only overload.
                 var miAddrOnly = typeof(ClientManager).GetMethod("StartConnection", new Type[] { typeof(string) });
                 if (miAddrOnly != null)
                 {
@@ -143,7 +129,6 @@ public class SimpleFishNetBootstrap : MonoBehaviour
                 }
                 else
                 {
-                    // Last resort: no overloads, try parameterless and rely on transport config.
                     started = _nm.ClientManager.StartConnection();
                 }
             }
@@ -188,12 +173,7 @@ public class SimpleFishNetBootstrap : MonoBehaviour
     {
         SubscribeServerEvents(false);
     }
-
-    /// <summary>
-    /// Finds all NetworkObjects in the current scene and spawns those that are not yet spawned.
-    /// Helpful when placing objects (like your Triangle) directly in the server scene,
-    /// without using FishNet's scene-loading or automatic spawning flows.
-    /// </summary>
+    
     private void TrySpawnSceneNetworkObjects()
     {
         if (_nm == null || _nm.ServerManager == null || !_nm.ServerManager.Started)
