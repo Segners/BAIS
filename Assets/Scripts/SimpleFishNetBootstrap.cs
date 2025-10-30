@@ -17,7 +17,7 @@ public class SimpleFishNetBootstrap : MonoBehaviour
     [SerializeField] private RunMode mode = RunMode.Server;
 
     [Header("Auto Start")]
-    [Tooltip("If true, will automatically start on Awake. If false, call StartNow() from your code/UI.")]
+    [Tooltip("If true, will automatically start on Awake for Server mode only. Client mode will not auto-connect.")]
     [SerializeField] private bool autoStartOnAwake = true;
 
     [Header("Client Settings")]
@@ -43,7 +43,16 @@ public class SimpleFishNetBootstrap : MonoBehaviour
         ApplyCommandLineOverrides();
 
         if (autoStartOnAwake)
-            StartNow();
+        {
+            if (mode == RunMode.Server)
+            {
+                StartServer();
+            }
+            else
+            {
+                Debug.Log("[SimpleFishNetBootstrap] Auto-start on Awake is disabled for Client mode. Use your Connect UI or call StartNow() manually.");
+            }
+        }
     }
 
     [ContextMenu("Start Now")] 

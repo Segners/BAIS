@@ -71,12 +71,12 @@ MonoBehaviour:
   _dontRoute: 0
   _reuseAddress: 1
   _unreliableMtu: 1023
-  _ipv4BindAddress: 
+  _ipv4BindAddress: 0.0.0.0
   _enableIpv6: 0
   _ipv6BindAddress: 
   _port: 7770
   _maximumClients: 4095
-  _clientAddress: localhost
+  _clientAddress: 172.23.144.1
 --- !u!114 &5460179814506905341
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -91,7 +91,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::SimpleFishNetBootstrap
   mode: 1
   autoStartOnAwake: 1
-  address: 127.0.0.1
+  address: 172.23.144.1
   port: 7770
 --- !u!114 &2394400464398245534
 MonoBehaviour:
