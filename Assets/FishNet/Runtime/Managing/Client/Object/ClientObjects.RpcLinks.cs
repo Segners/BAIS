@@ -47,6 +47,27 @@ namespace FishNet.Managing.Client
             else if (Spawned.TryGetValueIL2CPP(link.ObjectId, out NetworkObject nob))
             {
                 // Still call GetPacketLength to remove any extra bytes at the front of the reader.
+                // Ensure component index is valid before accessing list to prevent out-of-range exceptions.
+                if (link.ComponentIndex >= nob.NetworkBehaviours.Count)
+                {
+                    int dataLen;
+                    // Use the packet id from the link to properly advance the reader past this message.
+                    if (link.RpcPacketId == PacketId.TargetRpc)
+                        dataLen = Packets.GetPacketLength((ushort)PacketId.TargetRpc, reader, channel);
+                    else if (link.RpcPacketId == PacketId.ObserversRpc)
+                        dataLen = Packets.GetPacketLength((ushort)PacketId.ObserversRpc, reader, channel);
+                    else if (link.RpcPacketId == PacketId.Reconcile)
+                        dataLen = Packets.GetPacketLength((ushort)PacketId.Reconcile, reader, channel);
+                    else
+                        dataLen = Packets.GetPacketLength(index, reader, channel);
+
+                    SkipDataLength(index, reader, dataLen, link.ObjectId);
+#if DEVELOPMENT
+                    NetworkManager.LogWarning($"RPCLink component index {link.ComponentIndex} is out of range for ObjectId {link.ObjectId} (components: {nob.NetworkBehaviours.Count}). Skipping.");
+#endif
+                    return;
+                }
+
                 NetworkBehaviour nb = nob.NetworkBehaviours[link.ComponentIndex];
                 if (link.RpcPacketId == PacketId.TargetRpc)
                 {
