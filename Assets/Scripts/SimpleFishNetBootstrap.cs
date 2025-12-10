@@ -6,6 +6,8 @@ using FishNet.Connection;
 using FishNet.Transporting;
 using FishNet.Object;
 using UnityEngine;
+using FishNet.Transporting.Tugboat;
+using FishNet.Managing.Timing;
 
 [DisallowMultipleComponent]
 [DefaultExecutionOrder(-10000)]
@@ -27,6 +29,20 @@ public class SimpleFishNetBootstrap : MonoBehaviour
     [Tooltip("Port for the transport (FishNet Tugboat default is 7770 unless changed in the transport). This value is only applied if your chosen transport reads it from NetworkManager settings or command line. If your transport manages the port internally, leave at default.")]
     [SerializeField] private ushort port = 7770;
 
+    [Header("Network Resilience")]
+    [Tooltip("Timeout en secondes avant de déconnecter une connexion silencieuse côté serveur.")]
+    [SerializeField] private int serverTimeoutSeconds = 15;
+    [Tooltip("Timeout en secondes avant de déconnecter une connexion silencieuse côté client.")]
+    [SerializeField] private int clientTimeoutSeconds = 15;
+
+    [Header("Timing")]
+    [Tooltip("Tick rate réseau FishNet. Laisser 0 pour ne pas modifier.")]
+    [SerializeField] private ushort tickRate = 30;
+
+    [Header("Debug Réseau")]
+    [SerializeField] private bool logNetworkStats = true;
+    [SerializeField] private float logIntervalSeconds = 5f;
+
     private NetworkManager _nm;
 
     private void Awake()
@@ -38,7 +54,12 @@ public class SimpleFishNetBootstrap : MonoBehaviour
             return;
         }
 
+        // Appliquer configuration transport / timing avant tout démarrage.
+        ConfigureTransportAndTiming();
+
         SubscribeServerEvents(true);
+
+        TrySubscribeRttLogging(true);
 
         ApplyCommandLineOverrides();
 
@@ -181,6 +202,7 @@ public class SimpleFishNetBootstrap : MonoBehaviour
     private void OnDestroy()
     {
         SubscribeServerEvents(false);
+        TrySubscribeRttLogging(false);
     }
     
     private void TrySpawnSceneNetworkObjects()
@@ -235,5 +257,86 @@ public class SimpleFishNetBootstrap : MonoBehaviour
         {
             Debug.Log($"[SimpleFishNetBootstrap][Server] Client disconnected. Id={conn.ClientId}, TransportIndex={args.TransportIndex}");
         }
+    }
+
+    /// <summary>
+    /// Configure le transport Tugboat (adresse, port, timeouts) et le TimeManager (tick rate) avant de démarrer.
+    /// </summary>
+    private void ConfigureTransportAndTiming()
+    {
+        try
+        {
+            if (_nm == null) return;
+
+            // Configurer Transport (Tugboat par défaut dans ce projet).
+            var transport = _nm.TransportManager != null ? _nm.TransportManager.Transport : null;
+            if (transport is Tugboat tb)
+            {
+                // Port côté serveur et client.
+                tb.SetPort(port);
+                // Adresse cible côté client (au cas où Client.StartConnection() sans paramètres serait utilisé).
+                tb.SetClientAddress(address);
+                // Bind serveur sur toutes interfaces IPv4 pour connexions distantes.
+                tb.SetServerBindAddress("0.0.0.0", FishNet.Transporting.IPAddressType.IPv4);
+
+                // Timeouts plus tolérants pour réseaux distants.
+                if (serverTimeoutSeconds > 0)
+                    tb.SetTimeout(serverTimeoutSeconds, asServer: true);
+                if (clientTimeoutSeconds > 0)
+                    tb.SetTimeout(clientTimeoutSeconds, asServer: false);
+            }
+
+            // Configurer le tick rate si demandé.
+            if (tickRate > 0)
+            {
+                TimeManager tm = _nm.TimeManager;
+                if (tm != null)
+                {
+                    tm.SetTickRate(tickRate);
+                    Debug.Log($"[SimpleFishNetBootstrap] TimeManager tickRate réglé à {tickRate}.");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[SimpleFishNetBootstrap] ConfigureTransportAndTiming exception: {ex.Message}");
+        }
+    }
+
+    private void TrySubscribeRttLogging(bool subscribe)
+    {
+        if (_nm == null) return;
+        var tm = _nm.TimeManager;
+        if (tm == null) return;
+
+        if (subscribe)
+        {
+            if (logNetworkStats)
+            {
+                // Log périodique car l’événement peut être très fréquent.
+                if (logIntervalSeconds <= 0f) logIntervalSeconds = 5f;
+                CancelInvoke(nameof(LogNetworkStats));
+                InvokeRepeating(nameof(LogNetworkStats), 2f, logIntervalSeconds);
+            }
+        }
+        else
+        {
+            CancelInvoke(nameof(LogNetworkStats));
+        }
+    }
+
+    private void LogNetworkStats()
+    {
+        if (_nm == null || _nm.TimeManager == null) return;
+        long rtt = _nm.TimeManager.RoundTripTime;
+        float pl = 0f;
+        try
+        {
+            var transport = _nm.TransportManager != null ? _nm.TransportManager.Transport : null;
+            if (transport is Tugboat tb)
+                pl = tb.GetPacketLoss(false);
+        }
+        catch { }
+        Debug.Log($"[SimpleFishNetBootstrap] RTT={rtt} ms, PacketLoss~{pl:0.0}% vers serveur {address}:{port}.");
     }
 }
