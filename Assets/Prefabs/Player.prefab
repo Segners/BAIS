@@ -117,7 +117,6 @@ MonoBehaviour:
   <PredictedSpawn>k__BackingField: {fileID: 0}
   <PredictedOwner>k__BackingField: {fileID: 7245800907919801494}
   NetworkBehaviours:
-  - {fileID: 0}
   - {fileID: 5432253889982698996}
   - {fileID: 7990600222049340749}
   - {fileID: 7245800907919801494}
@@ -150,7 +149,7 @@ MonoBehaviour:
   <AssetPathHash>k__BackingField: 2092870565765373345
   <SceneId>k__BackingField: 0
   SerializedTransformProperties:
-    Position: {x: -4.703, y: -0.092, z: 0}
+    Position: {x: -4.703, y: -0.092, z: 1}
     Rotation: {x: 0, y: 0, z: 0, w: 1}
     Scale: {x: 1, y: 1, z: 1}
     IsValid: 1
@@ -193,7 +192,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d52937cbc1464eb6bcab121cf69455fa, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::TriangleController2D
-  _componentIndexCache: 1
+  _componentIndexCache: 0
   _addedNetworkObject: {fileID: 8303294277447387306}
   _networkObjectCache: {fileID: 8303294277447387306}
   moveSpeed: 6
@@ -207,10 +206,12 @@ MonoBehaviour:
   horizontalAxis: Horizontal
   jumpButton: Jump
   arm: {fileID: 6781234793213207803}
-  aimOnlyForOwner: 1
+  aimOnlyForOwner: 0
   armAngleOffset: 91
   handTip: {fileID: 0}
   visualizeReachCircle: 1
+  spriteToFlip: {fileID: 0}
+  predictFacingLocally: 1
 --- !u!114 &7990600222049340749
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -223,7 +224,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: a2836e36774ca1c4bbbee976e17b649c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: FishNet.Runtime::FishNet.Component.Transforming.NetworkTransform
-  _componentIndexCache: 2
+  _componentIndexCache: 1
   _addedNetworkObject: {fileID: 8303294277447387306}
   _networkObjectCache: {fileID: 8303294277447387306}
   _componentConfiguration: 3
@@ -269,7 +270,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 03002f7d324007e41b10a9dc87ed3c38, type: 3}
   m_Name: 
   m_EditorClassIdentifier: FishNet.Runtime::FishNet.Component.Ownership.PredictedOwner
-  _componentIndexCache: 3
+  _componentIndexCache: 2
   _addedNetworkObject: {fileID: 8303294277447387306}
   _networkObjectCache: {fileID: 8303294277447387306}
   _allowTakeOwnership: 1

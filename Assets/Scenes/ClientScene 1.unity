@@ -272,6 +272,10 @@ PrefabInstance:
       propertyPath: address
       value: 172.23.144.1
       objectReference: {fileID: 0}
+    - target: {fileID: 6509031312432548532, guid: 6e4ad78708875a141aaedf29dc9ac6eb, type: 3}
+      propertyPath: _persistence
+      value: 2
+      objectReference: {fileID: 0}
     - target: {fileID: 8560783526229213184, guid: 6e4ad78708875a141aaedf29dc9ac6eb, type: 3}
       propertyPath: m_Name
       value: NetworkManager

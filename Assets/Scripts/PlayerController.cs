@@ -45,6 +45,10 @@ public class PlayerController : NetworkBehaviour
     [SerializeField] private Transform handTip;
     [Tooltip("If true and a handTip is set, we visualize the reachable circle so you can align the tip to cursor the closest possible (Option C).")]
     [SerializeField] private bool visualizeReachCircle = true;
+    [Tooltip("Minimum angle change (degrees) before syncing to other clients.")]
+    [SerializeField] private float armSyncMinDelta = 1.5f;
+    [Tooltip("Maximum send rate for arm angle updates (messages per second). Set to 0 to disable rate limit.")]
+    [SerializeField] private float armSyncMaxRate = 20f;
 
     [Header("Facing")]
     [Tooltip("Sprite to flip horizontally when facing left/right. If not set, we will flip the root transform scale instead.")]
@@ -64,6 +68,11 @@ public class PlayerController : NetworkBehaviour
 
     // 1 = facing right, -1 = facing left. Managed manually (FishNet v4: no SyncVar).
     private int _facing = 1;
+
+    // Arm aim networking cache.
+    private float _currentArmAngleDeg;
+    private float _lastSentArmAngleDeg;
+    private float _lastArmSendTime;
 
     private void Awake()
     {
@@ -90,6 +99,14 @@ public class PlayerController : NetworkBehaviour
         // Seed facing state for observers (FishNet v4, no SyncVar). Buffer the last value so late joiners get it.
         if (IsServer)
             RpcFacingChanged(_facing);
+
+        // Also seed arm angle for observers so late joiners get initial aim.
+        if (IsServer && arm != null)
+        {
+            float z = arm.eulerAngles.z;
+            _currentArmAngleDeg = z;
+            RpcArmAngleChanged(z);
+        }
     }
 
     public override void OnStopNetwork()
@@ -101,9 +118,17 @@ public class PlayerController : NetworkBehaviour
 
     private void Update()
     {
-        // Only the owning client should handle local input and optional aiming visuals.
+        // Only the owning client should handle local input.
         if (!IsOwner)
+        {
+            // For non-owners, if we have a replicated arm angle, make sure it's applied locally.
+            if (arm != null && aimOnlyForOwner)
+            {
+                // _currentArmAngleDeg already contains offset.
+                arm.rotation = Quaternion.Euler(0f, 0f, _currentArmAngleDeg);
+            }
             return;
+        }
 
 #if ENABLE_INPUT_SYSTEM
         float axis = 0f;
@@ -148,7 +173,7 @@ public class PlayerController : NetworkBehaviour
             }
         }
 
-        // Rotate the arm (child) around Z to face the mouse position (client-side visual only).
+        // Rotate the arm (child) around Z to face the mouse position.
         if (arm != null && (!aimOnlyForOwner || IsOwner))
         {
             Camera cam = Camera.main;
@@ -167,6 +192,10 @@ public class PlayerController : NetworkBehaviour
                 Vector2 dir = (Vector2)(mouseWorld - arm.position);
                 float angle = Mathf.Atan2(dir.y, dir.x) * Mathf.Rad2Deg + armAngleOffset;
                 arm.rotation = Quaternion.Euler(0f, 0f, angle);
+                _currentArmAngleDeg = angle;
+
+                // Send to server so it can relay to observers, with simple threshold and rate limiting.
+                TrySendArmAngle(angle);
             }
         }
     }
@@ -305,5 +334,43 @@ public class PlayerController : NetworkBehaviour
         base.OnStartClient();
         // We rely on RpcFacingChanged buffered to observers for initial state.
         // ApplyFacing() was already called in Awake/OnStartNetwork for local instance.
+    }
+
+    // -------------------- Arm Aim Networking --------------------
+    private void TrySendArmAngle(float angle)
+    {
+        // Only the owner should request a relay to others.
+        if (!IsOwner)
+            return;
+
+        // Threshold check to avoid spamming tiny changes.
+        if (Mathf.Abs(Mathf.DeltaAngle(_lastSentArmAngleDeg, angle)) < armSyncMinDelta)
+        {
+            // Still allow periodic refresh to fight drift if a max rate is set.
+            float minInterval = (armSyncMaxRate > 0f) ? (1f / armSyncMaxRate) : 0f;
+            if (minInterval <= 0f || Time.unscaledTime - _lastArmSendTime < minInterval)
+                return;
+        }
+
+        _lastSentArmAngleDeg = angle;
+        _lastArmSendTime = Time.unscaledTime;
+        SendArmAngleServerRpc(angle);
+    }
+
+    [ServerRpc]
+    private void SendArmAngleServerRpc(float angle)
+    {
+        // Cache on server (host visuals may use it if desired beyond this script).
+        _currentArmAngleDeg = angle;
+        // Relay to observers; owner excluded to prevent double-application.
+        RpcArmAngleChanged(angle);
+    }
+
+    [ObserversRpc(BufferLast = true, ExcludeOwner = true)]
+    private void RpcArmAngleChanged(float angle)
+    {
+        _currentArmAngleDeg = angle;
+        if (arm != null)
+            arm.rotation = Quaternion.Euler(0f, 0f, angle);
     }
 }
