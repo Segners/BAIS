@@ -221,7 +221,7 @@ MonoBehaviour:
   _preventDespawnOnDisconnect: 0
   _defaultDespawnType: 0
   NetworkObserver: {fileID: 0}
-  _enablePrediction: 1
+  _enablePrediction: 0
   _predictionType: 2
   _graphicalObject: {fileID: 6022163238987204055}
   _detachGraphicalObject: 1
@@ -239,7 +239,7 @@ MonoBehaviour:
   <AssetPathHash>k__BackingField: 2092870565765373345
   <SceneId>k__BackingField: 0
   SerializedTransformProperties:
-    Position: {x: -4.703, y: -0.092, z: 1}
+    Position: {x: -4.703, y: -0.092, z: 3}
     Rotation: {x: 0, y: 0, z: 0, w: 1}
     Scale: {x: 1, y: 1, z: 1}
     IsValid: 1
@@ -299,13 +299,20 @@ MonoBehaviour:
   aimOnlyForOwner: 0
   armAngleOffset: 91
   handTip: {fileID: 0}
-  visualizeReachCircle: 1
+  visualizeReachCircle: 0
   armSyncMinDelta: 1.5
   armSyncMaxRate: 20
+  bulletPrefab: {fileID: 2546315446038609079, guid: 85b9550799ffae04982fd3a49c3cd0be, type: 3}
+  muzzle: {fileID: 8033361780434616942}
+  fireRate: 6
+  bulletSpeed: 14
+  overrideBulletSpeed: 0
+  bulletAngleOffset: 0
+  bulletLifetime: 3
+  overrideBulletLifetime: 1
+  muzzleForwardOffset: 0.3
   spriteToFlip: {fileID: 0}
   predictFacingLocally: 1
-  bulletPrefab: {fileID: 2546315446038609079, guid: 85b9550799ffae04982fd3a49c3cd0be, type: 3}
-  fireCooldown: 0.15
 --- !u!114 &7990600222049340749
 MonoBehaviour:
   m_ObjectHideFlags: 0

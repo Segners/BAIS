@@ -13,14 +13,16 @@ using FishNet.Managing.Timing;
 [DefaultExecutionOrder(-10000)]
 public class SimpleFishNetBootstrap : MonoBehaviour
 {
-    public enum RunMode { Server, Client }
+    public enum RunMode { Server, Client, Host }
 
     [Header("Mode")]
     [SerializeField] private RunMode mode = RunMode.Server;
 
     [Header("Auto Start")]
-    [Tooltip("If true, will automatically start on Awake for Server mode only. Client mode will not auto-connect.")]
+    [Tooltip("If true, will automatically start on Awake for Server mode only. Client mode will not auto-connect unless 'autoStartClientOnAwake' is also true.")]
     [SerializeField] private bool autoStartOnAwake = true;
+    [Tooltip("If true and mode is Client (or Host), will also auto-start the client on Awake.")]
+    [SerializeField] private bool autoStartClientOnAwake = false;
 
     [Header("Client Settings")]
     [Tooltip("IP or hostname the client will connect to.")]
@@ -63,15 +65,29 @@ public class SimpleFishNetBootstrap : MonoBehaviour
 
         ApplyCommandLineOverrides();
 
+        // En headless (batch mode), forcer le mode serveur et l'auto-start.
+        if (Application.isBatchMode)
+        {
+            mode = RunMode.Server;
+            autoStartOnAwake = true;
+        }
+
         if (autoStartOnAwake)
         {
-            if (mode == RunMode.Server)
+            switch (mode)
             {
-                StartServer();
-            }
-            else
-            {
-                Debug.Log("[SimpleFishNetBootstrap] Auto-start on Awake is disabled for Client mode. Use your Connect UI or call StartNow() manually.");
+                case RunMode.Server:
+                    StartServer();
+                    break;
+                case RunMode.Client:
+                    if (autoStartClientOnAwake)
+                        StartClient();
+                    else
+                        Debug.Log("[SimpleFishNetBootstrap] Auto-start on Awake is disabled for Client mode unless 'autoStartClientOnAwake' is true.");
+                    break;
+                case RunMode.Host:
+                    StartHost();
+                    break;
             }
         }
     }
@@ -92,6 +108,9 @@ public class SimpleFishNetBootstrap : MonoBehaviour
                 break;
             case RunMode.Client:
                 StartClient();
+                break;
+            case RunMode.Host:
+                StartHost();
                 break;
             default:
                 Debug.LogError("[SimpleFishNetBootstrap] Unknown mode.");
@@ -173,6 +192,18 @@ public class SimpleFishNetBootstrap : MonoBehaviour
         }
     }
 
+    private void StartHost()
+    {
+        // Démarre le serveur puis le client local si possible.
+        StartServer();
+
+        // Adresse locale si non renseignée spécifiquement.
+        if (string.IsNullOrWhiteSpace(address))
+            address = "127.0.0.1";
+
+        StartClient();
+    }
+
     private void ApplyCommandLineOverrides()
     {
         try
@@ -185,12 +216,40 @@ public class SimpleFishNetBootstrap : MonoBehaviour
                     mode = RunMode.Server;
                 else if (string.Equals(a, "-client", StringComparison.OrdinalIgnoreCase))
                     mode = RunMode.Client;
+                else if (string.Equals(a, "-host", StringComparison.OrdinalIgnoreCase))
+                    mode = RunMode.Host;
                 else if (string.Equals(a, "-address", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
                     address = args[++i];
                 else if (string.Equals(a, "-port", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length && ushort.TryParse(args[i + 1], out var p))
                 {
                     port = p;
                     i++;
+                }
+                else if (string.Equals(a, "-tickrate", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length && UInt16.TryParse(args[i + 1], out var tr))
+                {
+                    tickRate = tr;
+                    i++;
+                }
+                else if (string.Equals(a, "-nologs", StringComparison.OrdinalIgnoreCase))
+                {
+                    logNetworkStats = false;
+                }
+                else if (string.Equals(a, "-loginterval", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length && float.TryParse(args[i + 1], out var li))
+                {
+                    logIntervalSeconds = Mathf.Max(0.1f, li);
+                    i++;
+                }
+                else if (string.Equals(a, "-autostart", StringComparison.OrdinalIgnoreCase))
+                {
+                    autoStartOnAwake = true;
+                }
+                else if (string.Equals(a, "-noautostart", StringComparison.OrdinalIgnoreCase))
+                {
+                    autoStartOnAwake = false;
+                }
+                else if (string.Equals(a, "-autostartclient", StringComparison.OrdinalIgnoreCase))
+                {
+                    autoStartClientOnAwake = true;
                 }
             }
         }
