@@ -107,6 +107,7 @@ GameObject:
   - component: {fileID: 7245800907919801494}
   - component: {fileID: -830295220700440149}
   - component: {fileID: 5314743666031944399}
+  - component: {fileID: 6951010008288903453}
   m_Layer: 0
   m_Name: Player
   m_TagString: Untagged
@@ -124,7 +125,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: -4.703, y: -0.092, z: 3}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalScale: {x: 1.2, y: 1.2, z: 1.2}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 6781234793213207803}
@@ -201,7 +202,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: FishNet.Runtime::FishNet.Object.NetworkObject
   <IsNested>k__BackingField: 0
-  WasActiveDuringEdit: 0
+  WasActiveDuringEdit: 1
   WasActiveDuringEdit_Set1: 1
   <ComponentIndex>k__BackingField: 0
   <PredictedSpawn>k__BackingField: {fileID: 0}
@@ -296,6 +297,7 @@ MonoBehaviour:
   horizontalAxis: Horizontal
   jumpButton: Jump
   arm: {fileID: 6781234793213207803}
+  armCrouchLocalOffset: {x: 0, y: -0.12}
   aimOnlyForOwner: 0
   armAngleOffset: 91
   handTip: {fileID: 0}
@@ -313,6 +315,18 @@ MonoBehaviour:
   muzzleForwardOffset: 0.3
   spriteToFlip: {fileID: 0}
   predictFacingLocally: 1
+  hitsToEliminate: 3
+  crouchSpeedMultiplier: 0.5
+  crouchDisablesJump: 1
+  animator: {fileID: 5314743666031944399}
+  crouchAnimatorBool: IsCrouching
+  crouchStateName: Crouch
+  runSpeedAnimatorFloat: Speed
+  groundedAnimatorBool: IsGrounded
+  adjustColliderOnCrouch: 1
+  mainCollider: {fileID: 0}
+  crouchHeightMultiplier: 0.7
+  standUpCeilingCheckPadding: 0.02
 --- !u!114 &7990600222049340749
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -434,6 +448,26 @@ Animator:
   m_AllowConstantClipSamplingOptimization: 1
   m_KeepAnimatorStateOnDisable: 0
   m_WriteDefaultValuesOnDisable: 0
+--- !u!114 &6951010008288903453
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7863054778223642882}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 14fb9ca701fb4b3eace8cdb4d54aca50, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PlayerDisplayName
+  _componentIndexCache: 255
+  _addedNetworkObject: {fileID: 8303294277447387306}
+  _networkObjectCache: {fileID: 0}
+  _tmpLabel: {fileID: 0}
+  _legacyLabel: {fileID: 0}
+  labelLocalOffset: {x: 0, y: 1.1, z: 0}
+  defaultFontSize: 2.8
+  labelColor: {r: 1, g: 1, b: 1, a: 1}
 --- !u!1001 &5564761876177057441
 PrefabInstance:
   m_ObjectHideFlags: 0

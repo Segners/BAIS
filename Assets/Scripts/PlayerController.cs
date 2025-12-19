@@ -37,6 +37,8 @@ public class PlayerController : NetworkBehaviour
     [Header("Arm Aim")]
     [Tooltip("Child transform of the player which should rotate on Z to aim at the mouse.")]
     [SerializeField] private Transform arm;
+    [Tooltip("Offset local appliqué au bras quand le joueur est accroupi (permet de baisser légèrement le bras).")]
+    [SerializeField] private Vector2 armCrouchLocalOffset = new Vector2(0f, -0.12f);
     [Tooltip("If true, arm aiming is only processed for the local owner (recommended).")]
     [SerializeField] private bool aimOnlyForOwner = true;
     [Tooltip("Angle offset in degrees to compensate sprite art forward direction (0 means sprite points to +X).")]
@@ -95,6 +97,58 @@ public class PlayerController : NetworkBehaviour
     private float _lastArmSendTime;
     private float _nextFireTime;
     private float _svNextFireTime; // sécurité cadence côté serveur
+    
+    // Arm base local position, used to offset while crouching
+    private Vector3 _armBaseLocalPos;
+    
+    [Header("Health")]
+    [Tooltip("Nombre de projectiles nécessaires pour éliminer le joueur.")]
+    [SerializeField] private int hitsToEliminate = 3;
+    private int _currentHits;
+    private bool _isEliminated;
+
+    [Header("Crouch")]
+    [Tooltip("Maintenir pour s'accroupir. Multiplie la vitesse horizontale par ce facteur.")]
+    [SerializeField] private float crouchSpeedMultiplier = 0.5f;
+    [Tooltip("Empêche de sauter lorsqu'on est accroupi.")]
+    [SerializeField] private bool crouchDisablesJump = true;
+    [Tooltip("Animator (optionnel) pour piloter l'animation d'accroupissement.")]
+    [SerializeField] private Animator animator;
+    [Tooltip("Nom du booléen Animator qui reflète l'état accroupi. Laisser vide pour ne pas l'utiliser.")]
+    [SerializeField] private string crouchAnimatorBool = "IsCrouching";
+    [Tooltip("Nom de l'état/clip à jouer lors de l'accroupissement (ex: 'sitdown1'). Laisser vide pour ignorer.")]
+    [SerializeField] private string crouchStateName = "sitdown1";
+    [Tooltip("Nom du paramètre float Animator pour la vitesse de course (absolue). Laisser vide pour ne pas l'utiliser.")]
+    [SerializeField] private string runSpeedAnimatorFloat = "Speed";
+    [Tooltip("Nom du paramètre bool Animator pour l'état au sol. Laisser vide pour ne pas l'utiliser.")]
+    [SerializeField] private string groundedAnimatorBool = "IsGrounded";
+    [Tooltip("Ajuster le collider pendant l'accroupissement pour éviter que le personnage flotte.")]
+    [SerializeField] private bool adjustColliderOnCrouch = true;
+    [Tooltip("Référence au collider principal à ajuster (si vide, auto: Capsule2D puis Box2D).")]
+    [SerializeField] private Collider2D mainCollider;
+    [Tooltip("Facteur appliqué à la hauteur du collider en crouch (ex: 0.7 = 70% de la hauteur).")]
+    [Range(0.3f, 1f)]
+    [SerializeField] private float crouchHeightMultiplier = 0.7f;
+    [Tooltip("Petite marge pour vérifier l'espace lors de la relève.")]
+    [SerializeField] private float standUpCeilingCheckPadding = 0.02f;
+
+    // Client -> Server inputs
+    private bool _clCrouchHeld;
+    // Authoritative state on server (also cached on clients via RPC)
+    private bool _svCrouchHeld;
+
+    // Cache des paramètres initiaux du collider
+    private CapsuleCollider2D _capsule;
+    private BoxCollider2D _box;
+    private Vector2 _origCapsuleSize;
+    private Vector2 _origCapsuleOffset;
+    private Vector2 _origBoxSize;
+    private Vector2 _origBoxOffset;
+
+    // Cache d'animation locomotion (serveur → observateurs)
+    private float _lastSentRunSpeed;
+    private bool _lastSentGrounded;
+    private float _lastLocomotionSendTime;
 
     private void Awake()
     {
@@ -107,6 +161,40 @@ public class PlayerController : NetworkBehaviour
         _rb.freezeRotation = true; 
         // Make sure initial facing is applied even before networking starts (useful in single-player/testing)
         ApplyFacing();
+
+        // Cache le point de base du bras pour pouvoir l'abaisser en crouch
+        if (arm != null)
+            _armBaseLocalPos = arm.localPosition;
+
+        // Auto-détection du collider principal
+        if (mainCollider == null)
+        {
+            TryGetComponent(out _capsule);
+            if (_capsule != null)
+                mainCollider = _capsule;
+            else
+            {
+                TryGetComponent(out _box);
+                if (_box != null)
+                    mainCollider = _box;
+            }
+        }
+        else
+        {
+            _capsule = mainCollider as CapsuleCollider2D;
+            _box = mainCollider as BoxCollider2D;
+        }
+
+        if (_capsule != null)
+        {
+            _origCapsuleSize = _capsule.size;
+            _origCapsuleOffset = _capsule.offset;
+        }
+        if (_box != null)
+        {
+            _origBoxSize = _box.size;
+            _origBoxOffset = _box.offset;
+        }
     }
 
     public override void OnStartNetwork()
@@ -128,6 +216,12 @@ public class PlayerController : NetworkBehaviour
             float z = arm.eulerAngles.z;
             _currentArmAngleDeg = z;
             RpcArmAngleChanged(z);
+        }
+
+        // Seed crouch state so tous les observateurs (late joiners) reçoivent l'état actuel
+        if (IsServerInitialized)
+        {
+            RpcCrouchChanged(_svCrouchHeld);
         }
     }
 
@@ -152,6 +246,13 @@ public class PlayerController : NetworkBehaviour
             return;
         }
 
+        // Si éliminé: pas d'input envoyé (immobilisé jusqu'à la prochaine manche)
+        if (_isEliminated)
+        {
+            // On laisse éventuellement le bras dans sa dernière orientation visuelle, mais on n'envoie rien.
+            return;
+        }
+
 #if ENABLE_INPUT_SYSTEM
         float axis = 0f;
         if (Keyboard.current != null)
@@ -171,13 +272,17 @@ public class PlayerController : NetworkBehaviour
         bool jumpPressed = (Keyboard.current?.spaceKey.wasPressedThisFrame ?? false) || (Gamepad.current?.buttonSouth.wasPressedThisFrame ?? false);
         if (jumpPressed)
             _clJumpPressed = true;
+        // Désactivation du crouch: on force l'état client à false
+        _clCrouchHeld = false;
 #else
         _clMoveInput = Input.GetAxisRaw(horizontalAxis);
         if (Input.GetButtonDown(jumpButton))
             _clJumpPressed = true;
+        // Désactivation du crouch: on force l'état client à false
+        _clCrouchHeld = false;
 #endif
         // Send movement/jump to server for authoritative movement.
-        SendInputServerRpc(_clMoveInput, _clJumpPressed);
+        SendInputServerRpc(_clMoveInput, _clJumpPressed, _clCrouchHeld);
         _clJumpPressed = false;
 
         // Optional local prediction so the flip happens instantly for the owner.
@@ -193,6 +298,17 @@ public class PlayerController : NetworkBehaviour
                 _facing = -1;
                 ApplyFacing();
             }
+        }
+
+        // Mise à jour visuelle locale de la locomotion pour l'owner (réactivité immédiate)
+        if (animator != null)
+        {
+            float mul = _clCrouchHeld ? Mathf.Clamp01(crouchSpeedMultiplier) : 1f;
+            float localSpeed = Mathf.Abs(_clMoveInput) * moveSpeed * mul;
+            // Estimation locale du grounded (visuelle uniquement)
+            Vector2 worldPos = (Vector2)transform.position + groundCheckLocalOffset;
+            bool localGrounded = Physics2D.OverlapCircle(worldPos, groundCheckRadius, groundLayers) is not null;
+            ApplyLocomotionVisual(localSpeed, localGrounded);
         }
 
         // Rotate the arm (child) around Z to face the mouse position.
@@ -244,10 +360,29 @@ public class PlayerController : NetworkBehaviour
         if (!IsServerInitialized)
             return;
 
+        // Si éliminé côté serveur, on fige les déplacements horizontaux et ignore les sauts.
+        if (_isEliminated)
+        {
+            var vel0 = _rb.linearVelocity;
+            vel0.x = 0f;
+            _rb.linearVelocity = vel0;
+            _svMoveInput = 0f;
+            _svJumpQueued = false;
+
+            // Pas besoin de gérer le reste tant que KO.
+            UpdateGrounded();
+            // Màj visuelle Idle côté serveur/host et clients
+            if (animator != null)
+                ApplyLocomotionVisual(0f, _isGrounded);
+            TrySendLocomotionToObservers(0f, _isGrounded);
+            return;
+        }
+
         UpdateGrounded();
 
         var vel = _rb.linearVelocity;
-        vel.x = _svMoveInput * moveSpeed;
+        float speedMul = _svCrouchHeld ? Mathf.Clamp01(crouchSpeedMultiplier) : 1f;
+        vel.x = _svMoveInput * moveSpeed * speedMul;
         _rb.linearVelocity = vel;
 
         // Update facing from last non-zero move input so the character looks in the last used direction.
@@ -260,7 +395,7 @@ public class PlayerController : NetworkBehaviour
             SetFacingServer(-1);
         }
 
-        if (_svJumpQueued)
+        if (_svJumpQueued && !(_svCrouchHeld && crouchDisablesJump))
         {
             _svJumpQueued = false;
             if (_isGrounded)
@@ -270,14 +405,23 @@ public class PlayerController : NetworkBehaviour
                 _rb.linearVelocity = vel;
             }
         }
+
+        // Màj visuelle de locomotion côté serveur/host
+        if (animator != null)
+            ApplyLocomotionVisual(Mathf.Abs(_rb.linearVelocity.x), _isGrounded);
+
+        // Diffuse l'état de locomotion (run speed + grounded) aux observateurs à un rythme limité
+        TrySendLocomotionToObservers(Mathf.Abs(_rb.linearVelocity.x), _isGrounded);
     }
 
     [ServerRpc]
-    private void SendInputServerRpc(float moveInput, bool jumpPressed)
+    private void SendInputServerRpc(float moveInput, bool jumpPressed, bool crouchHeld)
     {
         _svMoveInput = Mathf.Clamp(moveInput, -1f, 1f);
         if (jumpPressed)
             _svJumpQueued = true;
+        // Désactivation du crouch côté serveur: ignorer toute demande et forcer à false
+        SetCrouchServer(false);
     }
 
     private void UpdateGrounded()
@@ -407,6 +551,200 @@ public class PlayerController : NetworkBehaviour
             arm.rotation = Quaternion.Euler(0f, 0f, angle);
     }
 
+    // -------------------- Crouch Sync --------------------
+    [ObserversRpc(BufferLast = true)]
+    private void RpcCrouchChanged(bool crouching)
+    {
+        _svCrouchHeld = crouching;
+        ApplyCrouchVisual(crouching);
+        ApplyCrouchCollider(crouching);
+    }
+
+    private void ApplyCrouchVisual(bool crouching)
+    {
+        if (animator == null)
+        {
+            // Même si pas d'Animator, on peut tout de même appliquer l'offset du bras
+            if (arm != null)
+                arm.localPosition = _armBaseLocalPos + (Vector3)(crouching ? armCrouchLocalOffset : Vector2.zero);
+            return;
+        }
+        if (!string.IsNullOrEmpty(crouchAnimatorBool))
+        {
+            animator.SetBool(crouchAnimatorBool, crouching);
+        }
+        if (crouching && !string.IsNullOrEmpty(crouchStateName))
+        {
+            // Lance l'animation d'accroupissement si précisée
+            animator.CrossFade(crouchStateName, 0.05f);
+        }
+        // Applique l'offset local du bras pendant le crouch (visuel léger)
+        if (arm != null)
+            arm.localPosition = _armBaseLocalPos + (Vector3)(crouching ? armCrouchLocalOffset : Vector2.zero);
+    }
+
+    // -------------------- Locomotion (Run) Sync --------------------
+    private void ApplyLocomotionVisual(float runSpeedAbs, bool grounded)
+    {
+        if (animator == null)
+            return;
+        if (!string.IsNullOrEmpty(runSpeedAnimatorFloat))
+        {
+            // Un léger damping pour fluidifier (0.1s)
+            animator.SetFloat(runSpeedAnimatorFloat, runSpeedAbs, 0.1f, Time.deltaTime);
+        }
+        if (!string.IsNullOrEmpty(groundedAnimatorBool))
+        {
+            animator.SetBool(groundedAnimatorBool, grounded);
+        }
+    }
+
+    private void TrySendLocomotionToObservers(float runSpeedAbs, bool grounded)
+    {
+        if (!IsServerInitialized)
+            return;
+
+        const float minDelta = 0.05f; // seuil de vitesse pour éviter le spam
+        const float maxRate = 20f;    // 20 msg/s max
+        float now = Time.unscaledTime;
+        float minInterval = 1f / maxRate;
+
+        bool speedChanged = Mathf.Abs(runSpeedAbs - _lastSentRunSpeed) >= minDelta;
+        bool groundedChanged = grounded != _lastSentGrounded;
+        bool timeOk = (now - _lastLocomotionSendTime) >= minInterval;
+
+        if (!(speedChanged || groundedChanged || timeOk))
+            return;
+
+        _lastSentRunSpeed = runSpeedAbs;
+        _lastSentGrounded = grounded;
+        _lastLocomotionSendTime = now;
+        RpcApplyLocomotion(runSpeedAbs, grounded);
+    }
+
+    [ObserversRpc(BufferLast = true, ExcludeOwner = true)]
+    private void RpcApplyLocomotion(float runSpeedAbs, bool grounded)
+    {
+        ApplyLocomotionVisual(runSpeedAbs, grounded);
+    }
+
+    // Ajuste la taille/offset du collider pendant l'accroupissement pour que les pieds restent au sol
+    private void ApplyCrouchCollider(bool crouching)
+    {
+        if (!adjustColliderOnCrouch)
+            return;
+
+        if (_capsule != null)
+        {
+            if (!crouching)
+            {
+                _capsule.size = _origCapsuleSize;
+                _capsule.offset = _origCapsuleOffset;
+            }
+            else
+            {
+                var size = _origCapsuleSize;
+                float newH = Mathf.Max(0.01f, size.y * Mathf.Clamp01(crouchHeightMultiplier));
+                float delta = size.y - newH;
+                _capsule.size = new Vector2(size.x, newH);
+                // Décale le centre vers le bas pour garder le bas au même endroit
+                _capsule.offset = _origCapsuleOffset + new Vector2(0f, -delta * 0.5f);
+            }
+        }
+        else if (_box != null)
+        {
+            if (!crouching)
+            {
+                _box.size = _origBoxSize;
+                _box.offset = _origBoxOffset;
+            }
+            else
+            {
+                var size = _origBoxSize;
+                float newH = Mathf.Max(0.01f, size.y * Mathf.Clamp01(crouchHeightMultiplier));
+                float delta = size.y - newH;
+                _box.size = new Vector2(size.x, newH);
+                _box.offset = _origBoxOffset + new Vector2(0f, -delta * 0.5f);
+            }
+        }
+    }
+
+    // Applique la demande d'accroupissement côté serveur avec vérif d'espace pour se relever
+    private void SetCrouchServer(bool wantCrouch)
+    {
+        if (!IsServerInitialized)
+            return;
+
+        if (wantCrouch == _svCrouchHeld)
+            return;
+
+        if (!wantCrouch)
+        {
+            // On veut se relever: vérifier qu'il y a de la place
+            if (!CanStandUp())
+            {
+                // Pas la place: rester accroupi
+                return;
+            }
+        }
+
+        _svCrouchHeld = wantCrouch;
+        // Appliquer immédiatement côté serveur (host) pour collider/visu
+        ApplyCrouchVisual(_svCrouchHeld);
+        ApplyCrouchCollider(_svCrouchHeld);
+        // Diffuser aux observateurs
+        RpcCrouchChanged(_svCrouchHeld);
+    }
+
+    private bool CanStandUp()
+    {
+        if (!adjustColliderOnCrouch)
+            return true;
+
+        // Construire la forme du collider "debout"
+        Vector2 worldCenter;
+        Vector2 size;
+        float angle = 0f;
+        bool hasShape = false;
+
+        if (_capsule != null)
+        {
+            var standSize = _origCapsuleSize;
+            worldCenter = (Vector2)transform.position + _origCapsuleOffset;
+            size = standSize + new Vector2(standUpCeilingCheckPadding * 2f, standUpCeilingCheckPadding * 2f);
+            hasShape = true;
+        }
+        else if (_box != null)
+        {
+            var standSize = _origBoxSize;
+            worldCenter = (Vector2)transform.position + _origBoxOffset;
+            size = standSize + new Vector2(standUpCeilingCheckPadding * 2f, standUpCeilingCheckPadding * 2f);
+            angle = _box.transform.eulerAngles.z;
+            hasShape = true;
+        }
+        else
+        {
+            return true; // pas de collider à gérer
+        }
+
+        if (!hasShape)
+            return true;
+
+        // Vérifier s'il y a un chevauchement avec l'environnement (en ignorant nos propres colliders)
+        var hits = Physics2D.OverlapBoxAll(worldCenter, size, angle, groundLayers);
+        foreach (var h in hits)
+        {
+            if (h == null)
+                continue;
+            if (h.attachedRigidbody != null && h.attachedRigidbody.gameObject == gameObject)
+                continue;
+            if (h.transform.root == transform.root)
+                continue; // ignore soi-même
+            return false; // obstacle détecté
+        }
+        return true;
+    }
+
     // -------------------- Shooting --------------------
     private Transform GetMuzzle()
     {
@@ -421,6 +759,9 @@ public class PlayerController : NetworkBehaviour
     {
         if (bulletPrefab == null)
             return;
+
+        if (_isEliminated)
+            return; // KO: pas de tir
 
         float minInterval = (fireRate > 0f) ? (1f / fireRate) : 0f;
         if (minInterval > 0f && Time.time < _nextFireTime)
@@ -457,6 +798,10 @@ public class PlayerController : NetworkBehaviour
         if (bulletPrefab == null)
             return;
 
+        // KO côté serveur: ignorer la demande
+        if (_isEliminated)
+            return;
+
         // Sécurité côté serveur : respecte la cadence max
         float minInterval = (fireRate > 0f) ? (1f / fireRate) : 0f;
         if (minInterval > 0f && Time.time < _svNextFireTime)
@@ -480,6 +825,128 @@ public class PlayerController : NetworkBehaviour
         if (proj != null)
         {
             proj.RpcSetup(angleDeg, speed);
+        }
+    }
+
+    // -------------------- Hits & Elimination --------------------
+    /// <summary>
+    /// Appelé côté serveur lorsqu'un projectile touche ce joueur.
+    /// </summary>
+    public void ServerRegisterHit()
+    {
+        if (!IsServerInitialized)
+            return;
+        if (_isEliminated)
+            return;
+
+        _currentHits++;
+        Debug.Log($"[PlayerController] [Server] Hit reçu {_currentHits}/{hitsToEliminate} par {name}");
+
+        if (_currentHits >= Mathf.Max(1, hitsToEliminate))
+        {
+            EliminateServer();
+        }
+        else
+        {
+            RpcOnHitFeedback(_currentHits, hitsToEliminate);
+        }
+    }
+
+    private void EliminateServer()
+    {
+        if (!IsServerInitialized)
+            return;
+        if (_isEliminated)
+            return;
+
+        _isEliminated = true;
+        Debug.Log($"[PlayerController] [Server] {name} est éliminé (KO)");
+
+        // Forcer la fin de l'accroupissement à l'élimination pour éviter les conflits d'animations
+        if (_svCrouchHeld)
+        {
+            _svCrouchHeld = false;
+            RpcCrouchChanged(false);
+        }
+
+        // Optionnel: désactiver les collisions du joueur éliminé pour éviter d'autres hits.
+        var cols = GetComponentsInChildren<Collider2D>(true);
+        foreach (var c in cols)
+            c.enabled = false;
+
+        RpcSetEliminated(true, _currentHits, hitsToEliminate);
+    }
+
+    /// <summary>
+    /// Réinitialise l'état pour la prochaine manche (à appeler côté serveur par un gestionnaire de manche).
+    /// </summary>
+    public void ResetForNewRound()
+    {
+        if (!IsServerInitialized)
+            return;
+
+        _currentHits = 0;
+        bool wasElim = _isEliminated;
+        _isEliminated = false;
+
+        // Sort de l'état accroupi au reset
+        if (_svCrouchHeld)
+        {
+            _svCrouchHeld = false;
+            RpcCrouchChanged(false);
+        }
+
+        // Réactiver les collisions si elles avaient été coupées.
+        var cols = GetComponentsInChildren<Collider2D>(true);
+        foreach (var c in cols)
+            c.enabled = true;
+
+        if (wasElim)
+        {
+            // Remettre à zéro la vélocité horizontale.
+            var v = _rb.linearVelocity;
+            v.x = 0f;
+            _rb.linearVelocity = v;
+        }
+
+        RpcSetEliminated(false, _currentHits, hitsToEliminate);
+        Debug.Log($"[PlayerController] [Server] {name} reset pour nouvelle manche");
+    }
+
+    [ObserversRpc]
+    private void RpcOnHitFeedback(int hits, int max)
+    {
+        // Petit feedback visuel: flash de couleur si SpriteRenderer disponible
+        if (spriteToFlip != null)
+        {
+            // Clignotement simple et non bloquant
+            spriteToFlip.color = new Color(1f, 0.5f, 0.5f, 1f);
+            // On planifie un retour à la normale via Coroutine légère si dispo
+            StopAllCoroutines();
+            StartCoroutine(ResetColorNextFrame());
+        }
+    }
+
+    private System.Collections.IEnumerator ResetColorNextFrame()
+    {
+        // Attendre un court délai
+        yield return new WaitForSeconds(0.06f);
+        if (spriteToFlip != null)
+            spriteToFlip.color = Color.white;
+    }
+
+    [ObserversRpc(BufferLast = true)]
+    private void RpcSetEliminated(bool eliminated, int hits, int max)
+    {
+        _isEliminated = eliminated;
+        _currentHits = hits;
+
+        // Visuel: rendre semi-transparent si KO
+        if (spriteToFlip != null)
+        {
+            var c = spriteToFlip.color;
+            c.a = eliminated ? 0.4f : 1f;
+            spriteToFlip.color = c;
         }
     }
 }
