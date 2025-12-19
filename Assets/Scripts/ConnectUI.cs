@@ -16,6 +16,9 @@ public class ConnectUI : MonoBehaviour
     [Tooltip("UI InputField for server port.")]
     [SerializeField] private InputField portField;
 
+    [Tooltip("UI InputField for player nickname (max 20 chars). Sauvegardé dans PlayerPrefs.")]
+    [SerializeField] private InputField nicknameField;
+
     [Tooltip("Button to trigger the connection.")]
     [SerializeField] private Button connectButton;
 
@@ -25,6 +28,9 @@ public class ConnectUI : MonoBehaviour
 
     [Tooltip("Default port used if parsing fails or input is empty.")]
     [SerializeField] private ushort defaultPort = 7777;
+
+    private const string NickPrefsKey = "player_nickname";
+    private const int NickMaxLen = 20;
 
     private void Awake()
     {
@@ -36,6 +42,17 @@ public class ConnectUI : MonoBehaviour
             ipField.text = defaultIp;
         if (portField != null && string.IsNullOrWhiteSpace(portField.text))
             portField.text = defaultPort.ToString();
+
+        // Pré-remplir le pseudo avec la dernière valeur mémorisée.
+        if (nicknameField != null && string.IsNullOrWhiteSpace(nicknameField.text))
+        {
+            string saved = PlayerPrefs.GetString(NickPrefsKey, string.Empty);
+            if (string.IsNullOrWhiteSpace(saved))
+            {
+                saved = $"Player{UnityEngine.Random.Range(1000, 9999)}"; // valeur de confort
+            }
+            nicknameField.text = saved;
+        }
 
         if (connectButton != null)
             connectButton.onClick.AddListener(OnClick_Connect);
@@ -65,6 +82,14 @@ public class ConnectUI : MonoBehaviour
         ushort port = defaultPort;
         if (portField != null && ushort.TryParse(portField.text, out var parsed))
             port = parsed;
+
+        // Lire / valider le pseudo et le sauvegarder pour que PlayerDisplayName le récupère au spawn.
+        string nickname = (nicknameField != null) ? nicknameField.text : string.Empty;
+        nickname = SanitizeNickname(nickname);
+        if (string.IsNullOrWhiteSpace(nickname))
+            nickname = $"Player{UnityEngine.Random.Range(1000, 9999)}";
+        PlayerPrefs.SetString(NickPrefsKey, nickname);
+        PlayerPrefs.Save();
 
         var transport = networkManager.TransportManager?.Transport;
         if (transport == null)
@@ -166,4 +191,22 @@ public class ConnectUI : MonoBehaviour
         return false;
     }
     #endregion
+
+    private static string SanitizeNickname(string input)
+    {
+        if (string.IsNullOrEmpty(input))
+            return string.Empty;
+
+        input = input.Trim();
+        if (input.Length > NickMaxLen)
+            input = input.Substring(0, NickMaxLen);
+
+        System.Text.StringBuilder sb = new System.Text.StringBuilder(input.Length);
+        foreach (char c in input)
+        {
+            if (char.IsLetterOrDigit(c) || c == ' ' || c == '_' || c == '-')
+                sb.Append(c);
+        }
+        return sb.ToString();
+    }
 }
